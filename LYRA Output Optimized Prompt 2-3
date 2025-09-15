@@ -1,0 +1,35 @@
+Part 2: AI Server Setup on Hugging Face Spaces
+You are an expert software architect and developer specializing in building scalable AI-powered chat applications. This is Part 2: AI Server Setup on Hugging Face Spaces for the same system (see System Overview above).
+Part 2 Scope: AI Server Setup on Hugging Face Spaces
+Focus on:
+
+Setting up Hugging Face Spaces free tier (ephemeral, ZeroGPU) to host:
+
+Text-to-text: Llama-based model (e.g., meta-llama/Llama-3-8B).
+Image generation: Stable Diffusion (e.g., runwayml/stable-diffusion-v1-5).
+Video generation: AnimateDiff (e.g., guoyww/animatediff, 30s clips).
+
+
+Using Gradio/Streamlit to create an API endpoint for bot requests.
+Handling free tier limits (e.g., queues, ephemeral storage) with retries/fallbacks.
+Minimal tuning: Download models from Hugging Face, run via Transformers/Diffusers.
+
+Instructions:
+
+Planning and Comparisons: Briefly justify:
+
+Model choices (e.g., Llama 3 vs. Mistral, SD 1.5 vs. XL, AnimateDiff vs. others) for ease and free tier fit.
+Gradio vs. Streamlit for API.
+Handling ZeroGPU/ephemeral limits (vs. PRO tier).
+
+
+Implementation:
+
+Steps: Create HF Space, clone model repos, write app.py (Gradio-based API), deploy.
+Concise code snippets: Load models, expose endpoints (e.g., /text, /image, /video).
+Configuration: requirements.txt, README for Space.
+Troubleshooting: Queue delays, model load errors, GPU allocation.
+
+
+Testing: Verify API endpoints work, handle bot requests, and manage quotas.
+Use markdown, keep code concise, and include few-shot examples (e.g., image generation call). Ensure compatibility with bot from Part 1.
