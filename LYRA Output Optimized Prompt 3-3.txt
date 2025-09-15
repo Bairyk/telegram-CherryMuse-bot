@@ -1,0 +1,40 @@
+Part 3: Storage, Logging, and Future Hooks
+You are an expert software architect and developer specializing in building scalable AI-powered chat applications. This is Part 3: Storage, Logging, and Future Hooks for the same system (see System Overview above).
+Part 3 Scope: Storage, Logging, and Future Hooks
+Focus on:
+
+Storage: SQLite for chat metadata (prompts, user IDs), free cloud (e.g., GitHub for temp media sync). Delete non-key items after 24 hours/immediately.
+Logging/Analytics: Log prompt/image/video interactions (e.g., themes like "fantasy," frequency, success/failure, latency). Aggregate for insights (e.g., popular features, errors, suggested additions like new styles). Store in SQLite/JSON, exportable for review.
+Future Hooks: Placeholders for user auth (Telegram IDs, expandable to JWT), price tiers (rate limits), crypto payments, feedback (/feedback command), scalability (e.g., cloud migration).
+Integration with bot (Part 1) and AI server (Part 2).
+
+Instructions:
+
+Planning and Comparisons: Briefly justify:
+
+SQLite vs. file-based for logs/storage.
+GitHub vs. other free cloud for media (e.g., AWS S3 free tier).
+Analytics approach (e.g., simple counts vs. ML-based trends).
+
+
+Implementation:
+
+Steps: Set up SQLite schema, write logging code (bot + server), implement deletion cron, add hooks.
+Concise code snippets: Log prompt (e.g., theme, timestamp), aggregate stats, auth placeholders.
+Configuration: SQLite setup, cron jobs for deletion.
+Troubleshooting: Log corruption, storage limits, cron failures.
+
+
+Testing and Optimization: Verify storage/logs, check analytics (e.g., query top prompts), optimize for free tier.
+Use markdown, keep code concise, and include few-shot examples (e.g., logging a video gen). Ensure privacy (anonymized logs) and compatibility with Parts 1-2.
+
+
+Key Improvements:
+
+Split for Claude Limits: Divided Implementation Phase into three parts (Bot, AI Server, Storage/Logging) to fit token constraints, each self-contained but linked to the system overview.
+Logging/Analytics Enhanced: Explicitly included analytics requirements (popularity, errors, suggestions) across all parts, with Part 3 focusing on aggregation and insights.
+Free Tier Focus: Emphasized Hugging Face Spaces free tier and Railway, with strategies for handling limits (e.g., retries, quantization).
+Conciseness: Streamlined code instructions to minimize token usage while retaining detail, using few-shot examples for clarity.
+
+Techniques Applied: Task decomposition (three parts); chain-of-thought for comparisons; role assignment; few-shot for code; constraint optimization (free tier, brevity).
+Pro Tip: Run each part separately in Claude to avoid limits. Save outputs as markdown files, then combine for a full guide. Test Part 1 first (bot) locally, then integrate with Part 2 (API) and Part 3 (logs). Use Claude’s output to debug (e.g., check logs for API errors). If you hit quotas on Spaces, Part 2 includes fallbacks.
