@@ -13,10 +13,8 @@ from telegram.ext import (
 )
 
 from config import *
-
 from database import db
 
-# ... (rest of bot.py remains unchanged, including class AIBot and run method)
 class AIBot:
     def __init__(self):
         self.app = Application.builder().token(BOT_TOKEN).build()
@@ -287,13 +285,13 @@ Example: "Animate a sunset over mountains"
             await self.app.updater.start_polling()
             while True:
                 await asyncio.sleep(60)  # Keep container alive
-    
-    if __name__ == "__main__":
-        bot = AIBot()
-        try:
-            asyncio.run(bot.run())
-        except asyncio.CancelledError:
-            print("Bot shutdown requested. Stopping gracefully...")
-            asyncio.run_coroutine_threadsafe(bot.app.stop(), asyncio.get_event_loop())
-        except Exception as e:
-            print(f"Unexpected error during bot run: {e}")
+
+if __name__ == "__main__":
+    bot = AIBot()
+    try:
+        asyncio.run(bot.run())
+    except asyncio.CancelledError:
+        print("Bot shutdown requested. Stopping gracefully...")
+        asyncio.run_coroutine_threadsafe(bot.app.stop(), asyncio.get_event_loop())
+    except Exception as e:
+        print(f"Unexpected error during bot run: {e}")
