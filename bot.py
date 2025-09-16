@@ -6,6 +6,9 @@ from datetime import datetime
 from typing import Optional
 
 import requests
+import base64
+import io
+from PIL import Image
 from telegram import Update
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, 
@@ -143,11 +146,12 @@ Example: "Animate a sunset over mountains"
             try:
                 start_time = time.time()
                 
-                # Placeholder API call - will be implemented in Part 2
+                # Updated API call to actual Hugging Face Space
                 response = requests.post(
-                    f"{HF_SPACES_URL}/{endpoint}",
+                    f"{HF_SPACES_URL}/api/{endpoint}",
                     json=data,
-                    timeout=30
+                    timeout=120,  # Longer timeout for AI generation
+                    headers={"Content-Type": "application/json"}
                 )
                 
                 response_time = time.time() - start_time
@@ -155,8 +159,12 @@ Example: "Animate a sunset over mountains"
                 if response.status_code == 200:
                     return response.json(), response_time
                 else:
-                    raise Exception(f"API returned {response.status_code}")
+                    raise Exception(f"API returned {response.status_code}: {response.text}")
                     
+            except requests.exceptions.Timeout:
+                if attempt == retries - 1:
+                    raise Exception("AI service is busy. Please try again in a moment.")
+                await asyncio.sleep(RETRY_DELAY * (attempt + 1))
             except Exception as e:
                 if attempt == retries - 1:
                     raise e
@@ -172,24 +180,43 @@ Example: "Animate a sunset over mountains"
         await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
         
         try:
-            # For now, return a placeholder response
-            # In Part 2, this will call the actual AI API
-            response_text = f"🎭 Creative Response for: '{prompt[:50]}...'\n\n[AI model will generate story here in Part 2]"
+            # Call actual AI API
+            api_data = {
+                "prompt": prompt,
+                "theme": theme
+            }
             
-            await update.message.reply_text(response_text)
+            result, response_time = await self.call_ai_api("generate_text", api_data)
             
-            # Log successful interaction
-            await db.log_interaction(
-                user_id=user_id,
-                content_type='text',
-                prompt=prompt,
-                theme=theme,
-                success=True,
-                response_time=1.5  # placeholder
-            )
-            
+            if result.get("success"):
+                response_text = f"🎭 **Creative Story:**\n\n{result['result']}\n\n✨ *Generated in {response_time:.1f}s*"
+                
+                # Split long messages
+                if len(response_text) > 4000:
+                    parts = [response_text[i:i+4000] for i in range(0, len(response_text), 4000)]
+                    for part in parts:
+                        await update.message.reply_text(part)
+                else:
+                    await update.message.reply_text(response_text)
+                
+                # Log successful interaction
+                await db.log_interaction(
+                    user_id=user_id,
+                    content_type='text',
+                    prompt=prompt,
+                    theme=theme,
+                    success=True,
+                    response_time=response_time
+                )
+            else:
+                raise Exception(result.get("error", "Unknown error"))
+                
         except Exception as e:
-            await update.message.reply_text("Sorry, I'm having trouble generating that story right now. Please try again!")
+            error_msg = str(e)
+            if "busy" in error_msg.lower():
+                await update.message.reply_text("🤖 AI is busy generating for other users. Please try again in a moment!")
+            else:
+                await update.message.reply_text("Sorry, I'm having trouble generating that story right now. Please try again!")
             
             # Log failed interaction
             await db.log_interaction(
@@ -198,7 +225,7 @@ Example: "Animate a sunset over mountains"
                 prompt=prompt,
                 theme=theme,
                 success=False,
-                error_msg=str(e)
+                error_msg=error_msg
             )
     
     async def handle_image(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -206,26 +233,53 @@ Example: "Animate a sunset over mountains"
         user_id = update.effective_user.id
         
         # Get prompt from caption or use default
-        prompt = update.message.caption or "Generate an image based on the uploaded photo"
+        prompt = update.message.caption or "Generate an artistic image"
         theme = self.extract_theme(prompt)
         
         await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="upload_photo")
         
         try:
-            # Placeholder for image generation
-            await update.message.reply_text(f"🎨 Image generation for: '{prompt}'\n\n[Stable Diffusion will generate image here in Part 2]")
+            # Call AI API for image generation
+            api_data = {
+                "prompt": prompt,
+                "theme": theme
+            }
             
-            await db.log_interaction(
-                user_id=user_id,
-                content_type='image',
-                prompt=prompt,
-                theme=theme,
-                success=True,
-                response_time=3.2  # placeholder
-            )
+            result, response_time = await self.call_ai_api("generate_image", api_data)
+            
+            if result.get("success"):
+                # Decode base64 image
+                image_data = base64.b64decode(result['result'])
+                image = Image.open(io.BytesIO(image_data))
+                
+                # Save temporarily and send
+                with io.BytesIO() as bio:
+                    image.save(bio, 'PNG')
+                    bio.seek(0)
+                    
+                    caption = f"🎨 **Generated Image**\n📝 Prompt: {prompt}\n⏱️ Generated in {response_time:.1f}s"
+                    await update.message.reply_photo(
+                        photo=bio,
+                        caption=caption
+                    )
+                
+                await db.log_interaction(
+                    user_id=user_id,
+                    content_type='image',
+                    prompt=prompt,
+                    theme=theme,
+                    success=True,
+                    response_time=response_time
+                )
+            else:
+                raise Exception(result.get("error", "Unknown error"))
             
         except Exception as e:
-            await update.message.reply_text("Image generation failed. Please try again!")
+            error_msg = str(e)
+            if "busy" in error_msg.lower():
+                await update.message.reply_text("🎨 Image AI is busy. Please try again in a moment!")
+            else:
+                await update.message.reply_text("Image generation failed. Please try again!")
             
             await db.log_interaction(
                 user_id=user_id,
@@ -233,32 +287,57 @@ Example: "Animate a sunset over mountains"
                 prompt=prompt,
                 theme=theme,
                 success=False,
-                error_msg=str(e)
+                error_msg=error_msg
             )
     
     async def handle_video(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle video generation requests"""
         user_id = update.effective_user.id
-        prompt = update.message.caption or "Animate the uploaded video"
+        prompt = update.message.caption or "Create a short animation"
         theme = self.extract_theme(prompt)
         
         await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="upload_video")
+        await update.message.reply_text("🎬 Creating your video animation... This may take up to 2 minutes.")
         
         try:
-            # Placeholder for video generation
-            await update.message.reply_text(f"🎬 Video animation for: '{prompt}'\n\n[AnimateDiff will generate video here in Part 2]")
+            # Call AI API for video generation
+            api_data = {
+                "prompt": prompt,
+                "duration": 2  # 2 seconds for free tier
+            }
             
-            await db.log_interaction(
-                user_id=user_id,
-                content_type='video',
-                prompt=prompt,
-                theme=theme,
-                success=True,
-                response_time=15.5  # placeholder
-            )
+            result, response_time = await self.call_ai_api("generate_video", api_data)
             
+            if result.get("success"):
+                # Decode base64 video
+                video_data = base64.b64decode(result['result'])
+                
+                with io.BytesIO(video_data) as bio:
+                    bio.name = 'generated_video.mp4'  # Required for Telegram
+                    
+                    caption = f"🎬 **Generated Animation**\n📝 Prompt: {prompt}\n⏱️ Generated in {response_time:.1f}s\n🎞️ {result.get('frames', 16)} frames at {result.get('fps', 8)} fps"
+                    await update.message.reply_video(
+                        video=bio,
+                        caption=caption
+                    )
+                
+                await db.log_interaction(
+                    user_id=user_id,
+                    content_type='video',
+                    prompt=prompt,
+                    theme=theme,
+                    success=True,
+                    response_time=response_time
+                )
+            else:
+                raise Exception(result.get("error", "Unknown error"))
+                
         except Exception as e:
-            await update.message.reply_text("Video generation failed. Please try again!")
+            error_msg = str(e)
+            if "busy" in error_msg.lower():
+                await update.message.reply_text("🎬 Video AI is busy. Please try again in a moment!")
+            else:
+                await update.message.reply_text("Video generation failed. Please try again!")
             
             await db.log_interaction(
                 user_id=user_id,
@@ -266,7 +345,7 @@ Example: "Animate a sunset over mountains"
                 prompt=prompt,
                 theme=theme,
                 success=False,
-                error_msg=str(e)
+                error_msg=error_msg
             )
     
     async def run(self):
