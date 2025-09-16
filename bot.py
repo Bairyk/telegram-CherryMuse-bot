@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-AI Roleplay Telegram Bot - Enhanced Implementation
-Features: Character management, detailed logging, multiple HF Spaces integration
+AI Roleplay Telegram Bot - Enhanced Implementation with Proper Logging
+Features: Character management, comprehensive logging, real HuggingFace API integration
 """
 
 import asyncio
@@ -17,12 +17,15 @@ from PIL import Image
 import requests
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
-    Application, CommandHandler, MessageHandler, 
+    Application, CommandHandler, MessageHandler,
     ContextTypes, filters, CallbackQueryHandler
 )
 
 from config import *
 from database import db
+
+# Setup logging
+logger = setup_logging()
 
 class CharacterManager:
     """Manage roleplay characters with persistent storage"""
@@ -97,9 +100,13 @@ class CharacterManager:
 
 class AIBot:
     def __init__(self):
+        logger.info("Initializing AI Bot...")
         self.app = Application.builder().token(BOT_TOKEN).build()
         self.user_contexts = {}  # Store conversation contexts
+        self.hf_spaces_available = bool(HF_SPACES)
+        logger.info(f"HuggingFace Spaces available: {self.hf_spaces_available}")
         self.setup_handlers()
+        logger.info("AI Bot initialized successfully")
     
     def setup_handlers(self):
         """Setup command and message handlers"""
@@ -126,13 +133,16 @@ class AIBot:
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /start command"""
         user_id = update.effective_user.id
-        
+        username = update.effective_user.username or "Unknown"
+        logger.info(f"User {user_id} (@{username}) started the bot")
+
         # Initialize user context
         if user_id not in self.user_contexts:
             self.user_contexts[user_id] = {
                 "current_character": "wizard",
                 "conversation_history": []
             }
+            logger.info(f"Created new context for user {user_id}")
         
         welcome_msg = """
 🎭 Welcome to your AI Roleplay Companion!
@@ -150,12 +160,16 @@ Just start chatting, or use /help for more commands!
         """
         await update.message.reply_text(welcome_msg, parse_mode='Markdown')
         
-        await db.log_interaction(
-            user_id=user_id,
-            content_type='command',
-            prompt='/start',
-            success=True
-        )
+        try:
+            await db.log_interaction(
+                user_id=user_id,
+                content_type='command',
+                prompt='/start',
+                success=True
+            )
+            logger.info(f"Logged /start interaction for user {user_id}")
+        except Exception as e:
+            logger.error(f"Failed to log interaction for user {user_id}: {e}")
     
     async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /help command"""
@@ -383,32 +397,68 @@ Just start chatting, or use /help for more commands!
                 return theme
         return 'general'
     
-    async def call_hf_api(self, space_url: str, data: dict, retries: int = MAX_RETRIES) -> tuple:
-        """Call Hugging Face Space API with retry logic"""
+    async def call_hf_space_api(self, space_type: str, payload: dict, retries: int = MAX_RETRIES) -> tuple:
+        """Call HuggingFace Space API with proper error handling and logging"""
+        if not self.hf_spaces_available:
+            logger.warning("HuggingFace Spaces not configured")
+            raise Exception("AI services are temporarily unavailable. Please contact admin.")
+
+        space_url = HF_SPACES.get(space_type)
+        if not space_url:
+            raise Exception(f"Space type {space_type} not configured")
+
+        api_url = f"{space_url}/api/predict"
+        headers = {
+            "Content-Type": "application/json"
+        }
+
+        logger.info(f"Calling HF Space: {space_type} ({space_url}) with payload size: {len(str(payload))}")
+
         for attempt in range(retries):
             try:
                 start_time = time.time()
-                
+                logger.debug(f"Attempt {attempt + 1}/{retries} for {space_type}")
+
                 response = requests.post(
-                    f"{space_url}/api/predict",
-                    json={"data": [data]},
+                    api_url,
+                    json={"data": [payload]},
                     timeout=120,
-                    headers={"Content-Type": "application/json"}
+                    headers=headers
                 )
-                
+
                 response_time = time.time() - start_time
-                
+                logger.info(f"HF API response time: {response_time:.2f}s, Status: {response.status_code}")
+
                 if response.status_code == 200:
                     result = response.json()
+                    logger.info(f"Successful Space call to {space_type} in {response_time:.2f}s")
                     return result, response_time
+                elif response.status_code == 503:
+                    logger.warning(f"Space {space_type} is loading, attempt {attempt + 1}/{retries}")
+                    if attempt == retries - 1:
+                        raise Exception(f"Space {space_type} is currently loading. Please try again in a few minutes.")
+                    await asyncio.sleep(RETRY_DELAY * (attempt + 1))
+                elif response.status_code == 429:
+                    logger.warning(f"Rate limit hit for {space_type}, attempt {attempt + 1}/{retries}")
+                    if attempt == retries - 1:
+                        raise Exception("Rate limit exceeded. Please try again later.")
+                    await asyncio.sleep(RETRY_DELAY * (attempt + 1) * 2)  # Longer delay for rate limits
                 else:
-                    raise Exception(f"API returned {response.status_code}: {response.text}")
-                    
+                    logger.error(f"API error {response.status_code}: {response.text[:200]}")
+                    raise Exception(f"AI service error ({response.status_code}). Please try again.")
+
             except requests.exceptions.Timeout:
+                logger.warning(f"Timeout for {space_type} attempt {attempt + 1}/{retries}")
                 if attempt == retries - 1:
-                    raise Exception("AI service is busy. Please try again in a moment.")
+                    raise Exception("AI service timeout. Please try again in a moment.")
+                await asyncio.sleep(RETRY_DELAY * (attempt + 1))
+            except requests.exceptions.ConnectionError:
+                logger.error(f"Connection error for {space_type} attempt {attempt + 1}/{retries}")
+                if attempt == retries - 1:
+                    raise Exception("Connection error. Please check your internet connection.")
                 await asyncio.sleep(RETRY_DELAY * (attempt + 1))
             except Exception as e:
+                logger.error(f"Unexpected error for {space_type}: {str(e)}")
                 if attempt == retries - 1:
                     raise e
                 await asyncio.sleep(RETRY_DELAY * (attempt + 1))
@@ -480,33 +530,41 @@ Recent conversation:"""
             
             character_prompt += f"\nHuman: {user_message}\n{character['name']}:"
             
-            # Call text generation API (using a public HF space)
-            result, response_time = await self.call_hf_api(
-                "https://huggingface.co/spaces/huggingface/text-generation",
+            # Call text generation using HuggingFace Space
+            logger.info(f"Generating roleplay response for user {user_id} with character {character['name']}")
+
+            result, response_time = await self.call_hf_space_api(
+                'text',
                 {
                     "inputs": character_prompt,
                     "parameters": {
                         "max_new_tokens": 150,
                         "temperature": 0.9,
                         "top_p": 0.95,
-                        "repetition_penalty": 1.1
+                        "repetition_penalty": 1.1,
+                        "do_sample": True
                     }
                 }
             )
             
-            # Extract response (this varies by HF space format)
-            if result and "data" in result:
+            # Extract response from HuggingFace Space API
+            if result and "data" in result and len(result["data"]) > 0:
                 generated_text = result["data"][0]
+                logger.debug(f"Generated text length: {len(generated_text)}")
+
                 # Clean up the response
                 response = generated_text.replace(character_prompt, "").strip()
                 response = response.split("\n")[0].strip()
-                
+
                 if len(response) < 10:
                     response = f"*{character['name']} pauses thoughtfully* Tell me more about that."
+                    logger.info(f"Generated short response for {character['name']}, using fallback")
             else:
+                logger.warning(f"Unexpected API response format: {result}")
                 response = f"*{character['name']} seems deep in thought*"
             
             # Send response
+            logger.info(f"Sending roleplay response from {character['name']} to user {user_id}")
             await update.message.reply_text(f"🎭 **{character['name']}:** {response}", parse_mode='Markdown')
             
             # Update conversation history
@@ -534,20 +592,29 @@ Recent conversation:"""
             
         except Exception as e:
             error_msg = str(e)
-            if "busy" in error_msg.lower():
-                await update.message.reply_text(f"🤖 {character['name']} is thinking deeply... Please try again in a moment!")
+            logger.error(f"Error in roleplay conversation for user {user_id}: {error_msg}")
+
+            if "loading" in error_msg.lower() or "503" in error_msg:
+                await update.message.reply_text(f"🤖 {character['name']} is waking up... Please try again in a moment!")
+            elif "rate limit" in error_msg.lower() or "429" in error_msg:
+                await update.message.reply_text(f"🤖 {character['name']} needs a moment to rest... Please try again in a few minutes!")
+            elif "unavailable" in error_msg.lower():
+                await update.message.reply_text(f"🤖 {character['name']} is currently unavailable. The AI service might be down.")
             else:
                 await update.message.reply_text(f"*{character['name']} seems distracted and doesn't respond clearly*")
-            
-            await db.log_interaction(
-                user_id=user_id,
-                content_type='roleplay',
-                prompt=user_message,
-                character_id=self.user_contexts[user_id]["current_character"],
-                theme=theme,
-                success=False,
-                error_msg=error_msg
-            )
+
+            try:
+                await db.log_interaction(
+                    user_id=user_id,
+                    content_type='roleplay',
+                    prompt=user_message,
+                    character_id=self.user_contexts[user_id]["current_character"],
+                    theme=theme,
+                    success=False,
+                    error_msg=error_msg
+                )
+            except Exception as log_error:
+                logger.error(f"Failed to log error interaction: {log_error}")
     
     async def generate_character_image(self, update: Update, character: Dict, description: str = ""):
         """Generate character image using Stable Diffusion Space"""
@@ -562,28 +629,43 @@ Recent conversation:"""
             else:
                 prompt = f"{character['appearance']}, portrait, high quality, detailed artwork, fantasy art"
             
-            # Call Stable Diffusion API
-            result, response_time = await self.call_hf_api(
-                "https://huggingface.co/spaces/stabilityai/stable-diffusion",
+            # Call image generation using HuggingFace Space
+            logger.info(f"Generating image for user {user_id} with prompt: {prompt[:50]}...")
+
+            result, response_time = await self.call_hf_space_api(
+                'image',
                 {
-                    "prompt": prompt,
-                    "negative_prompt": "blurry, low quality, distorted",
-                    "num_inference_steps": 20,
-                    "guidance_scale": 7.5
+                    "inputs": prompt,
+                    "parameters": {
+                        "negative_prompt": "blurry, low quality, distorted, nsfw",
+                        "num_inference_steps": 20,
+                        "guidance_scale": 7.5,
+                        "width": 512,
+                        "height": 512
+                    }
                 }
             )
             
+            # Handle HuggingFace Space image response
             if result and "data" in result:
-                # Handle different response formats
+                logger.info(f"Received image data from Space")
                 image_data = result["data"][0]
-                
-                # If base64 string
-                if isinstance(image_data, str):
+
+                # Handle different image formats from Spaces
+                if isinstance(image_data, str) and image_data.startswith('data:image'):
+                    # Base64 data URI
+                    header, encoded = image_data.split(',', 1)
+                    image_bytes = base64.b64decode(encoded)
+                    image = Image.open(io.BytesIO(image_bytes))
+                    logger.info(f"Successfully loaded image: {image.size}")
+                elif isinstance(image_data, str):
+                    # Plain base64
                     image_bytes = base64.b64decode(image_data)
                     image = Image.open(io.BytesIO(image_bytes))
+                    logger.info(f"Successfully loaded image: {image.size}")
                 else:
-                    # Handle other formats as needed
-                    raise Exception("Unexpected image format from API")
+                    logger.error(f"Unexpected image response format: {type(image_data)}")
+                    raise Exception("Unexpected image format from Space")
                 
                 # Send image
                 with io.BytesIO() as bio:
@@ -593,29 +675,44 @@ Recent conversation:"""
                     caption = f"🎨 **{character['name']}**\n📝 {prompt[:100]}...\n⏱️ Generated in {response_time:.1f}s"
                     await update.message.reply_photo(photo=bio, caption=caption, parse_mode='Markdown')
                 
-                await db.log_interaction(
-                    user_id=user_id,
-                    content_type='image',
-                    prompt=prompt,
-                    character_id=character.get('id', 'unknown'),
-                    theme=self.extract_theme(prompt),
-                    success=True,
-                    response_time=response_time
-                )
+                try:
+                    await db.log_interaction(
+                        user_id=user_id,
+                        content_type='image',
+                        prompt=prompt,
+                        character_id=character.get('id', 'unknown'),
+                        theme=self.extract_theme(prompt),
+                        success=True,
+                        response_time=response_time
+                    )
+                    logger.info(f"Logged successful image generation for user {user_id}")
+                except Exception as log_error:
+                    logger.error(f"Failed to log image interaction: {log_error}")
             else:
                 raise Exception("No image data returned from API")
                 
         except Exception as e:
-            await update.message.reply_text(f"🎨 Sorry, I couldn't generate an image of {character['name']} right now. Please try again later!")
-            
-            await db.log_interaction(
-                user_id=user_id,
-                content_type='image',
-                prompt=description,
-                character_id=character.get('id', 'unknown'),
-                success=False,
-                error_msg=str(e)
-            )
+            error_msg = str(e)
+            logger.error(f"Error generating image for user {user_id}: {error_msg}")
+
+            if "loading" in error_msg.lower():
+                await update.message.reply_text(f"🎨 The image generator is starting up... Please try again in a few minutes!")
+            elif "rate limit" in error_msg.lower():
+                await update.message.reply_text(f"🎨 Too many image requests right now. Please try again in a few minutes!")
+            else:
+                await update.message.reply_text(f"🎨 Sorry, I couldn't generate an image of {character['name']} right now. Please try again later!")
+
+            try:
+                await db.log_interaction(
+                    user_id=user_id,
+                    content_type='image',
+                    prompt=description,
+                    character_id=character.get('id', 'unknown'),
+                    success=False,
+                    error_msg=error_msg
+                )
+            except Exception as log_error:
+                logger.error(f"Failed to log image error: {log_error}")
     
     async def generate_character_video(self, update: Update, character: Dict, action: str = "talking"):
         """Generate character video using AnimateDiff Space"""
@@ -627,31 +724,41 @@ Recent conversation:"""
             # Build video prompt
             prompt = f"{character['appearance']}, {action}, smooth animation, high quality"
             
-            # Call AnimateDiff API
-            result, response_time = await self.call_hf_api(
-                "https://huggingface.co/spaces/guoyww/animatediff",
+            # Call Video Generation using HuggingFace Space
+            logger.info(f"Generating video for user {user_id} with prompt: {prompt[:50]}...")
+            logger.warning("Video generation through HF Spaces has limitations - may not work reliably")
+
+            result, response_time = await self.call_hf_space_api(
+                'video',
                 {
-                    "prompt": prompt,
-                    "num_inference_steps": 20,
-                    "guidance_scale": 7.5,
-                    "num_frames": 16
+                    "inputs": prompt,
+                    "parameters": {
+                        "num_inference_steps": 20,
+                        "guidance_scale": 7.5,
+                        "num_frames": 16,
+                        "height": 320,
+                        "width": 576
+                    }
                 }
             )
             
+            # Handle video response from HuggingFace Space
             if result and "data" in result:
+                logger.info(f"Received video data from Space")
                 video_data = result["data"][0]
-                
-                # Handle base64 video data
+
                 if isinstance(video_data, str):
+                    # Assume base64 encoded video
                     video_bytes = base64.b64decode(video_data)
-                    
                     with io.BytesIO(video_bytes) as bio:
                         bio.name = f'{character["name"]}_animation.mp4'
-                        
+
                         caption = f"🎬 **{character['name']}** - {action}\n⏱️ Generated in {response_time:.1f}s"
                         await update.message.reply_video(video=bio, caption=caption, parse_mode='Markdown')
+                        logger.info(f"Successfully sent video to user {user_id}")
                 else:
-                    raise Exception("Unexpected video format from API")
+                    logger.error(f"Unexpected video response format: {type(video_data)}")
+                    raise Exception("Unexpected video format from Space")
                 
                 await db.log_interaction(
                     user_id=user_id,
@@ -666,16 +773,27 @@ Recent conversation:"""
                 raise Exception("No video data returned from API")
                 
         except Exception as e:
-            await update.message.reply_text(f"🎬 Sorry, I couldn't create an animation of {character['name']} right now. Please try again later!")
-            
-            await db.log_interaction(
-                user_id=user_id,
-                content_type='video',
-                prompt=action,
-                character_id=character.get('id', 'unknown'),
-                success=False,
-                error_msg=str(e)
+            error_msg = str(e)
+            logger.error(f"Error generating video for user {user_id}: {error_msg}")
+
+            # Video generation is currently experimental/limited
+            await update.message.reply_text(
+                f"🎬 Video generation is currently experimental and may not work reliably. "
+                f"The HuggingFace Space might be down or overloaded. "
+                f"Please try image generation instead!\n\nError: {error_msg[:100]}..."
             )
+
+            try:
+                await db.log_interaction(
+                    user_id=user_id,
+                    content_type='video',
+                    prompt=action,
+                    character_id=character.get('id', 'unknown'),
+                    success=False,
+                    error_msg=error_msg
+                )
+            except Exception as log_error:
+                logger.error(f"Failed to log video error: {log_error}")
     
     async def handle_character_creation(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle the character creation process"""
@@ -851,13 +969,17 @@ Recent conversation:"""
         
         await update.message.reply_text(response_msg, parse_mode='Markdown')
         
-        await db.log_interaction(
-            user_id=user_id,
-            content_type='image_response',
-            prompt=caption,
-            character_id=current_char_id,
-            success=True
-        )
+        try:
+            await db.log_interaction(
+                user_id=user_id,
+                content_type='image_response',
+                prompt=caption,
+                character_id=current_char_id,
+                success=True
+            )
+            logger.info(f"Logged image response for user {user_id}")
+        except Exception as e:
+            logger.error(f"Failed to log image response: {e}")
     
     async def handle_video(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle uploaded videos - generate character response"""
@@ -885,42 +1007,68 @@ Recent conversation:"""
         
         await update.message.reply_text(response_msg, parse_mode='Markdown')
         
-        await db.log_interaction(
-            user_id=user_id,
-            content_type='video_response',
-            prompt=caption,
-            character_id=current_char_id,
-            success=True
-        )
+        try:
+            await db.log_interaction(
+                user_id=user_id,
+                content_type='video_response',
+                prompt=caption,
+                character_id=current_char_id,
+                success=True
+            )
+            logger.info(f"Logged video response for user {user_id}")
+        except Exception as e:
+            logger.error(f"Failed to log video response: {e}")
     
     async def run(self):
         """Initialize and run the bot"""
-        # Initialize database
-        await db.init_db()
-        
-        # Initialize default characters in database
-        for char_id, char_data in CharacterManager.DEFAULT_CHARACTERS.items():
-            await db.ensure_default_character(char_id, char_data)
-        
-        # Start bot
-        await self.app.initialize()
-        await self.app.start()
-        
-        print("🤖 AI Roleplay Bot started successfully!")
-        print(f"📊 Database: {DATABASE_PATH}")
-        print(f"🌐 HF Spaces URL: {HF_SPACES_URL}")
-        
-        # Start polling
-        async with self.app:
-            await self.app.updater.start_polling()
-            while True:
-                await asyncio.sleep(60)  # Keep container alive
+        logger.info("Starting bot initialization...")
+
+        try:
+            # Initialize database
+            logger.info("Initializing database...")
+            await db.init_db()
+            logger.info("Database initialized successfully")
+
+            # Initialize default characters in database
+            logger.info("Setting up default characters...")
+            for char_id, char_data in CharacterManager.DEFAULT_CHARACTERS.items():
+                await db.ensure_default_character(char_id, char_data)
+                logger.debug(f"Ensured character: {char_id}")
+            logger.info("Default characters setup complete")
+
+            # Start bot
+            logger.info("Starting Telegram bot...")
+            await self.app.initialize()
+            await self.app.start()
+
+            logger.info("🤖 AI Roleplay Bot started successfully!")
+            logger.info(f"📊 Database: {DATABASE_PATH}")
+            logger.info(f"🌐 HuggingFace Spaces: {list(HF_SPACES.keys())}")
+            if DEBUG:
+                logger.info("Debug mode enabled")
+
+            # Start polling
+            logger.info("Starting polling...")
+            async with self.app:
+                await self.app.updater.start_polling()
+                logger.info("Bot is now running and polling for updates")
+                while True:
+                    await asyncio.sleep(60)  # Keep container alive
+
+        except Exception as e:
+            logger.critical(f"Failed to start bot: {e}")
+            raise
 
 if __name__ == "__main__":
-    bot = AIBot()
     try:
+        logger.info("Creating bot instance...")
+        bot = AIBot()
+        logger.info("Starting bot...")
         asyncio.run(bot.run())
     except KeyboardInterrupt:
+        logger.info("Bot shutdown requested by user")
         print("Bot shutdown requested.")
     except Exception as e:
+        logger.critical(f"Critical bot error: {e}")
         print(f"Bot error: {e}")
+        raise

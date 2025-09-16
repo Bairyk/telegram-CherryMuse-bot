@@ -47,3 +47,7 @@ logs/
 # Media files (temporary)
 media/
 temp/
+
+# Development/test files
+test_syntax.py
+.claude/

@@ -1,8 +1,12 @@
 import aiosqlite
 import json
+import logging
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any
 from config import DATABASE_PATH
+
+# Setup logger for database operations
+logger = logging.getLogger(__name__)
 
 class Database:
     def __init__(self):
@@ -10,75 +14,80 @@ class Database:
     
     async def init_db(self):
         """Initialize database tables with enhanced schema"""
-        async with aiosqlite.connect(self.db_path) as db:
-            # User interactions table (enhanced)
-            await db.execute('''
-                CREATE TABLE IF NOT EXISTS interactions (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER NOT NULL,
-                    content_type TEXT NOT NULL,
-                    prompt TEXT NOT NULL,
-                    character_id TEXT,
-                    theme TEXT,
-                    success BOOLEAN NOT NULL,
-                    response_time REAL,
-                    error_msg TEXT,
-                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    metadata TEXT
-                )
-            ''')
-            
-            # Characters table for custom characters
-            await db.execute('''
-                CREATE TABLE IF NOT EXISTS characters (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    character_id TEXT UNIQUE NOT NULL,
-                    name TEXT NOT NULL,
-                    lore TEXT NOT NULL,
-                    behavior TEXT NOT NULL,
-                    appearance TEXT NOT NULL,
-                    creator_id INTEGER,
-                    public BOOLEAN DEFAULT FALSE,
-                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    usage_count INTEGER DEFAULT 0
-                )
-            ''')
-            
-            # User preferences and settings
-            await db.execute('''
-                CREATE TABLE IF NOT EXISTS user_settings (
-                    user_id INTEGER PRIMARY KEY,
-                    current_character TEXT DEFAULT 'wizard',
-                    preferred_themes TEXT,
-                    settings TEXT,
-                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    last_active DATETIME DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
-            
-            # Analytics table for aggregated data
-            await db.execute('''
-                CREATE TABLE IF NOT EXISTS analytics (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    date DATE NOT NULL,
-                    content_type TEXT NOT NULL,
-                    theme TEXT,
-                    character_id TEXT,
-                    count INTEGER DEFAULT 1,
-                    avg_response_time REAL,
-                    success_rate REAL,
-                    UNIQUE(date, content_type, theme, character_id)
-                )
-            ''')
-            
-            # Create indexes for better performance
-            await db.execute('CREATE INDEX IF NOT EXISTS idx_interactions_user_id ON interactions(user_id)')
-            await db.execute('CREATE INDEX IF NOT EXISTS idx_interactions_timestamp ON interactions(timestamp)')
-            await db.execute('CREATE INDEX IF NOT EXISTS idx_interactions_character_id ON interactions(character_id)')
-            await db.execute('CREATE INDEX IF NOT EXISTS idx_characters_creator_id ON characters(creator_id)')
-            
-            await db.commit()
-            print("Database initialized successfully")
+        logger.info(f"Initializing database at {self.db_path}")
+        try:
+            async with aiosqlite.connect(self.db_path) as db:
+                # User interactions table (enhanced)
+                await db.execute('''
+                    CREATE TABLE IF NOT EXISTS interactions (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        user_id INTEGER NOT NULL,
+                        content_type TEXT NOT NULL,
+                        prompt TEXT NOT NULL,
+                        character_id TEXT,
+                        theme TEXT,
+                        success BOOLEAN NOT NULL,
+                        response_time REAL,
+                        error_msg TEXT,
+                        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        metadata TEXT
+                    )
+                ''')
+
+                # Characters table for custom characters
+                await db.execute('''
+                    CREATE TABLE IF NOT EXISTS characters (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        character_id TEXT UNIQUE NOT NULL,
+                        name TEXT NOT NULL,
+                        lore TEXT NOT NULL,
+                        behavior TEXT NOT NULL,
+                        appearance TEXT NOT NULL,
+                        creator_id INTEGER,
+                        public BOOLEAN DEFAULT FALSE,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        usage_count INTEGER DEFAULT 0
+                    )
+                ''')
+
+                # User preferences and settings
+                await db.execute('''
+                    CREATE TABLE IF NOT EXISTS user_settings (
+                        user_id INTEGER PRIMARY KEY,
+                        current_character TEXT DEFAULT 'wizard',
+                        preferred_themes TEXT,
+                        settings TEXT,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        last_active DATETIME DEFAULT CURRENT_TIMESTAMP
+                    )
+                ''')
+
+                # Analytics table for aggregated data
+                await db.execute('''
+                    CREATE TABLE IF NOT EXISTS analytics (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        date DATE NOT NULL,
+                        content_type TEXT NOT NULL,
+                        theme TEXT,
+                        character_id TEXT,
+                        count INTEGER DEFAULT 1,
+                        avg_response_time REAL,
+                        success_rate REAL,
+                        UNIQUE(date, content_type, theme, character_id)
+                    )
+                ''')
+
+                # Create indexes for better performance
+                await db.execute('CREATE INDEX IF NOT EXISTS idx_interactions_user_id ON interactions(user_id)')
+                await db.execute('CREATE INDEX IF NOT EXISTS idx_interactions_timestamp ON interactions(timestamp)')
+                await db.execute('CREATE INDEX IF NOT EXISTS idx_interactions_character_id ON interactions(character_id)')
+                await db.execute('CREATE INDEX IF NOT EXISTS idx_characters_creator_id ON characters(creator_id)')
+
+                await db.commit()
+                logger.info("Database initialized successfully")
+        except Exception as e:
+            logger.error(f"Failed to initialize database: {e}")
+            raise
     
     async def log_interaction(self, user_id: int, content_type: str, prompt: str, 
                             character_id: str = None, theme: str = None, 
