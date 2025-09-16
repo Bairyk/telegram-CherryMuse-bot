@@ -2,10 +2,12 @@ import os
 from dotenv import load_dotenv
 
 load_dotenv()
-
-# Bot Configuration
-BOT_TOKEN = os.getenv('BOT_TOKEN')
-HF_SPACES_URL = os.getenv('HF_SPACES_URL', 'https://your-space.hf.space')
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+if not BOT_TOKEN:
+    raise ValueError("BOT_TOKEN is not set. Please add it in Railway environment variables or a local .env file.")
+HF_SPACES_URL = os.getenv("HF_SPACES_URL", "https://your-space.hf.space")
+MAX_RETRIES = 3
+RETRY_DELAY = 2
 
 # Database Configuration
 DATABASE_PATH = 'bot_data.db'
