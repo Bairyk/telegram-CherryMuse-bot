@@ -286,4 +286,10 @@ Example: "Animate a sunset over mountains"
 
 if __name__ == "__main__":
     bot = AIBot()
-    asyncio.run(bot.run())
+    try:
+        asyncio.run(bot.run())
+    except asyncio.CancelledError:
+        print("Bot shutdown requested. Stopping gracefully...")
+        asyncio.run(bot.app.stop())
+    except Exception as e:
+        print(f"Unexpected error during bot run: {e}")
