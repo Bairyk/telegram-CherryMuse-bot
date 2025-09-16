@@ -13,8 +13,10 @@ from telegram.ext import (
 )
 
 from config import *
+
 from database import db
 
+# ... (rest of bot.py remains unchanged, including class AIBot and run method)
 class AIBot:
     def __init__(self):
         self.app = Application.builder().token(BOT_TOKEN).build()
