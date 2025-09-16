@@ -272,7 +272,7 @@ Example: "Animate a sunset over mountains"
             )
     
     async def run(self):
-        """Initialize and run the bot"""
+        """Initialize and run the bot with keep-alive"""
         # Initialize database
         await db.init_db()
         
@@ -282,16 +282,18 @@ Example: "Animate a sunset over mountains"
         
         print("🤖 Bot started successfully!")
         
-        # Keep running
-        await self.app.updater.start_polling()
-        await self.app.updater.idle()
-
-if __name__ == "__main__":
-    bot = AIBot()
-    try:
-        asyncio.run(bot.run())
-    except asyncio.CancelledError:
-        print("Bot shutdown requested. Stopping gracefully...")
-        asyncio.run(bot.app.stop())
-    except Exception as e:
-        print(f"Unexpected error during bot run: {e}")
+        # Start polling with keep-alive
+        async with self.app:
+            await self.app.updater.start_polling()
+            while True:
+                await asyncio.sleep(60)  # Keep container alive
+    
+    if __name__ == "__main__":
+        bot = AIBot()
+        try:
+            asyncio.run(bot.run())
+        except asyncio.CancelledError:
+            print("Bot shutdown requested. Stopping gracefully...")
+            asyncio.run_coroutine_threadsafe(bot.app.stop(), asyncio.get_event_loop())
+        except Exception as e:
+            print(f"Unexpected error during bot run: {e}")
